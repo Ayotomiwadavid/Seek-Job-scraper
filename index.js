@@ -137,13 +137,13 @@ async function scrapeAndPostJobs() {
 }
 
 // Express route for triggering the scrape
-const start =  async (req, res) => {
+const start =  async () => {
   try {
     await scrapeAndPostJobs();
-    res.send("Scraping and posting jobs completed successfully!");
+    console.log("Scraping and posting jobs completed successfully!");
   } catch (error) {
     console.error("Error in scraping route:", error.message);
-    res.status(500).send("An error occurred while scraping jobs.");
+    console.log("An error occurred while scraping jobs.");
   }
 };
 
