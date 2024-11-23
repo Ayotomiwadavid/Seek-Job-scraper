@@ -32,7 +32,10 @@ async function ensurePuppeteerSetup() {
 
 // Scraping function
 async function scrapeJobs(pageNumber = 1) {
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'], // Added for Docker compatibility
+  });
   const page = await browser.newPage();
   const url = `${BASE_URL}?page=${pageNumber}`;
   console.log(`Navigating to: ${url}`);
