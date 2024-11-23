@@ -137,7 +137,7 @@ async function scrapeAndPostJobs() {
 }
 
 // Express route for triggering the scrape
-app.get("/scrape-jobs", async (req, res) => {
+const start =  async (req, res) => {
   try {
     await scrapeAndPostJobs();
     res.send("Scraping and posting jobs completed successfully!");
@@ -145,9 +145,10 @@ app.get("/scrape-jobs", async (req, res) => {
     console.error("Error in scraping route:", error.message);
     res.status(500).send("An error occurred while scraping jobs.");
   }
-});
+};
 
 // Start the server
 app.listen(PORT, () => {
+  start();
   console.log(`Server running on http://localhost:${PORT}`);
 });
