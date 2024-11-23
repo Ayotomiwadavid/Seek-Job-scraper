@@ -2,7 +2,6 @@ const express = require("express");
 const puppeteer = require("puppeteer");
 const axios = require("axios");
 require("dotenv").config(); // For environment variables
-const { execSync } = require("child_process"); // To execute shell commands
 
 const app = express();
 const PORT = 8000;
@@ -18,24 +17,9 @@ const BASE_URL = "https://www.seek.com.au/jobs";
 // Set to track posted job URLs
 let postedJobUrls = new Set();
 
-// Install necessary Chrome version
-async function ensurePuppeteerSetup() {
-  console.log("Ensuring Puppeteer is properly set up...");
-  try {
-    execSync("npx puppeteer browsers install chrome", { stdio: "inherit" });
-    console.log("Puppeteer setup complete.");
-  } catch (error) {
-    console.error("Error setting up Puppeteer:", error.message);
-    throw error;
-  }
-}
-
 // Scraping function
 async function scrapeJobs(pageNumber = 1) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'], // Added for Docker compatibility
-  });
+  const browser = await puppeteer.launch({ headless: true });
   const page = await browser.newPage();
   const url = `${BASE_URL}?page=${pageNumber}`;
   console.log(`Navigating to: ${url}`);
@@ -70,7 +54,7 @@ async function scrapeJobs(pageNumber = 1) {
             location: location || "Not specified",
             salary: salary || "Not specified",
             JobDecription: description || "Not Specified",
-          });
+          })
         }
       });
       return jobData;
@@ -87,6 +71,7 @@ async function scrapeJobs(pageNumber = 1) {
 
 // Post to WordPress
 async function postJobToWordPress(job) {
+  // Check if the job URL has already been posted
   if (postedJobUrls.has(job.jobUrl)) {
     console.log(`Job already posted: ${job.title}`);
     return null;
@@ -111,8 +96,9 @@ async function postJobToWordPress(job) {
           password: WP_APP_PASSWORD,
         },
       }
-    );
+    );    
 
+    // Add the job URL to the set to prevent future duplicates
     postedJobUrls.add(job.jobUrl);
     console.log(`Job posted: ${job.title}`);
     return response.data;
@@ -142,7 +128,8 @@ async function scrapeAndPostJobs() {
       await postJobToWordPress(job);
     }
 
-    hasNextPage = jobs.length > 0;
+    // Check if a next page exists
+    hasNextPage = jobs.length > 0; // Adjust this logic based on the pagination element on the site
     currentPage++;
   }
 
@@ -150,19 +137,17 @@ async function scrapeAndPostJobs() {
 }
 
 // Express route for triggering the scrape
-const start = async () => {
+app.get("/scrape-jobs", async (req, res) => {
   try {
-    await ensurePuppeteerSetup(); // Ensure Puppeteer is ready
     await scrapeAndPostJobs();
-    console.log("Scraping and posting jobs completed successfully!");
+    res.send("Scraping and posting jobs completed successfully!");
   } catch (error) {
     console.error("Error in scraping route:", error.message);
-    console.log("An error occurred while scraping jobs.");
+    res.status(500).send("An error occurred while scraping jobs.");
   }
-};
+});
 
 // Start the server
 app.listen(PORT, () => {
-  start();
   console.log(`Server running on http://localhost:${PORT}`);
 });
