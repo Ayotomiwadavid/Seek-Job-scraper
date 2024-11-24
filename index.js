@@ -1,156 +1,141 @@
 const express = require("express");
-const puppeteer = require("puppeteer");
 const axios = require("axios");
 require("dotenv").config(); // For environment variables
+const { ApifyClient } = require('apify-client');
 
 const app = express();
 const PORT = 8000;
 
-// WordPress credentials and default configurations
-const WP_API_URL = "https://ausjobs.net/wp-json/wp/v2/job_listing";
-const WP_USERNAME = process.env.WP_USERNAME;
-const WP_APP_PASSWORD = process.env.WP_APP_PASSWORD;
-const DEFAULT_IMAGE_URL =
-  "https://ausjobs.net/wp-content/uploads/2024/11/Job-advert-external-1024x641-1.jpeg";
-const BASE_URL = "https://www.seek.com.au/jobs";
+const dataSetItems = [];
+
+// Initialize Apify Client with environment variables
+const client = new ApifyClient({
+    token: process.env.APIFY_API_TOKEN,
+});
+
+// Fetch data from Apify
+const fetchApifyData = async () => {
+    try {
+        // Starts an actor and waits for it to finish
+        const { defaultDatasetId } = await client.actor('websift/seek-job-scraper').call();
+        
+        // Fetches results from the actor's dataset
+        const { items } = await client.dataset(defaultDatasetId).listItems();
+
+        // Clear previous dataSetItems to prevent duplication
+        dataSetItems.length = 0;
+
+        for (const item of items) {
+            dataSetItems.push({
+                title: item.title,
+                description: item.content.jobHook,
+                salary: item.salary.amount !== 'N/A' ? `${item.salary.amount} ${item.salary.currency}` : 'Not specified',
+                location: item.joblocationInfo.displayLocation,
+                jobLink: item.jobLink,
+                image: item.advertiser.logo || 'No image available',
+                company: item.advertiser.name || 'No company specified',
+            });
+
+            console.log({
+                title: item.title,
+                description: item.content.jobHook,
+                salary: item.salary.amount !== 'N/A' ? `${item.salary.amount} ${item.salary.currency}` : 'Not specified',
+                location: item.joblocationInfo.displayLocation,
+                jobLink: item.jobLink,
+                image: item.advertiser.logo || 'No image available',
+                company: item.advertiser.name || 'No company specified',
+            });
+        }
+
+        return { msg: 'Fetching completed' };
+    } catch (error) {
+        console.error("Error fetching data:", error.message);
+        return { msg: 'Fetching failed' };
+    }
+};
 
 // Set to track posted job URLs
 let postedJobUrls = new Set();
 
-// Scraping function
-async function scrapeJobs(pageNumber = 1) {
-  const browser = await puppeteer.launch({ 
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-   });
-  const page = await browser.newPage();
-  const url = `${BASE_URL}?page=${pageNumber}`;
-  console.log(`Navigating to: ${url}`);
-
-  try {
-    await page.goto(url, { waitUntil: "load", timeout: 0 });
-    const jobs = await page.evaluate(() => {
-      const jobCards = document.querySelectorAll("._1viagsn5b._1viagsnhf");
-      const jobData = [];
-      jobCards.forEach((card) => {
-        const title = card.querySelector("a[data-automation='jobTitle']")?.textContent.trim();
-        const jobUrl = card.querySelector("a[data-automation='jobTitle']")?.href;
-        const company = card.querySelector("a[data-automation='jobCompany']")?.textContent.trim();
-        const location = card.querySelector("a[data-automation='jobLocation']")?.textContent.trim();
-        const salary = card.querySelector("span[data-automation='jobSalary']")?.textContent.trim();
-        const description = card.querySelector("span[data-automation='jobShortDescription']")?.textContent.trim();
-
-        if (title && jobUrl) {
-          jobData.push({
-            title,
-            jobUrl,
-            company: company || "Not specified",
-            location: location || "Not specified",
-            salary: salary || "Not specified",
-            JobDecription: description || "Not Specified",
-          });
-
-          console.log({
-            title,
-            jobUrl,
-            company: company || "Not specified",
-            location: location || "Not specified",
-            salary: salary || "Not specified",
-            JobDecription: description || "Not Specified",
-          })
-        }
-      });
-      return jobData;
-    });
-
-    await browser.close();
-    return jobs;
-  } catch (error) {
-    console.error("Error scraping jobs:", error.message);
-    await browser.close();
-    return [];
-  }
-}
-
 // Post to WordPress
 async function postJobToWordPress(job) {
-  // Check if the job URL has already been posted
-  if (postedJobUrls.has(job.jobUrl)) {
-    console.log(`Job already posted: ${job.title}`);
-    return null;
-  }
-
-  try {
-    const response = await axios.post(
-      WP_API_URL,
-      {
-        title: job.title,
-        content: `<img src="${DEFAULT_IMAGE_URL}" alt="Job Image"/><br>Company: ${job.company}<br>Location: ${job.location}<br>Salary: ${job.salary}<br> Description: ${job.JobDecription}<br> <a href="${job.jobUrl}">Apply Here</a>`,
-        status: "publish",
-        meta: {
-          _application: job.jobUrl,
-          _job_location: job.location, // Explicitly map location here
-        },
-        link: job.jobUrl,
-      },
-      {
-        auth: {
-          username: WP_USERNAME,
-          password: WP_APP_PASSWORD,
-        },
-      }
-    );    
-
-    // Add the job URL to the set to prevent future duplicates
-    postedJobUrls.add(job.jobUrl);
-    console.log(`Job posted: ${job.title}`);
-    return response.data;
-  } catch (error) {
-    console.error(`Error posting job: ${job.title}`, error.response?.data || error.message);
-    return null;
-  }
-}
-
-// Main scraping and posting logic
-async function scrapeAndPostJobs() {
-  let currentPage = 1;
-  let hasNextPage = true;
-
-  while (hasNextPage) {
-    console.log(`Scraping page ${currentPage}...`);
-    const jobs = await scrapeJobs(currentPage);
-
-    console.log(jobs);
-
-    if (jobs.length === 0) {
-      console.log("No jobs found. Stopping...");
-      break;
+    // Check if the job URL has already been posted
+    if (postedJobUrls.has(job.jobLink)) {
+        console.log(`Job already posted: ${job.title}`);
+        return null;
     }
 
-    for (const job of jobs) {
-      await postJobToWordPress(job);
+    try {
+        const response = await axios.post(
+            process.env.WP_API_URL,
+            {
+                title: job.title,
+                content: `<img src="${job.image}" alt="Job Image"/><br>Company: ${job.company}<br>Location: ${job.location}<br>Salary: ${job.salary}<br>Description: ${job.description}<br><a href="${job.jobLink}">Apply Here</a>`,
+                status: "publish",
+                meta: {
+                    _application: job.jobLink,
+                    _job_location: job.location,
+                },
+            },
+            {
+                auth: {
+                    username: process.env.WP_USERNAME,
+                    password: process.env.WP_APP_PASSWORD,
+                },
+            }
+        );
+
+        // Add the job URL to the set to prevent future duplicates
+        postedJobUrls.add(job.jobLink);
+        console.log(`Job posted: ${job.title}`);
+        return response.data;
+    } catch (error) {
+        console.error(`Error posting job: ${job.title}`, error.response?.data || error.message);
+        return null;
     }
-
-    // Check if a next page exists
-    hasNextPage = jobs.length > 0; // Adjust this logic based on the pagination element on the site
-    currentPage++;
-  }
-
-  console.log("Scraping and posting completed.");
 }
 
-// Express route for triggering the scrape
-app.get("/scrape-jobs", async (req, res) => {
-  try {
-    await scrapeAndPostJobs();
-    res.send("Scraping and posting jobs completed successfully!");
-  } catch (error) {
-    console.error("Error in scraping route:", error.message);
-    res.status(500).send("An error occurred while scraping jobs.");
-  }
-});
+// Schedule the daily task
+const scheduleDailyTask = () => {
+    const now = new Date(); // Current time
+    const targetTime = new Date(); // Target 4:00 PM today
+
+    targetTime.setHours(16, 0, 0, 0); // Set target time to 4:00 PM (24-hour format)
+
+    // If it's past 4:00 PM today, schedule for tomorrow
+    if (now > targetTime) {
+        targetTime.setDate(targetTime.getDate() + 1);
+    }
+
+    // Calculate the initial delay (time until next 4:00 PM)
+    const initialDelay = targetTime - now;
+
+    // Schedule the function to run at the target time
+    setTimeout(async () => {
+        const response = await fetchApifyData();
+
+        if (response.msg === 'Fetching completed') {
+            for (const job of dataSetItems) {
+                await postJobToWordPress(job);
+            }
+        }
+
+        // Use setInterval to run it every 24 hours afterward
+        setInterval(async () => {
+            const response = await fetchApifyData();
+            if (response.msg === 'Fetching completed') {
+                for (const job of dataSetItems) {
+                    await postJobToWordPress(job);
+                }
+            }
+        }, 24 * 60 * 60 * 1000); // Every 24 hours
+    }, initialDelay);
+};
+
+// Start the scheduling
+scheduleDailyTask();
 
 // Start the server
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on http://localhost:${PORT}`);
 });
